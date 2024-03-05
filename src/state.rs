@@ -1,4 +1,7 @@
+use wgpu::util::DeviceExt;
 use winit::{event::WindowEvent, window::Window};
+
+use crate::line::{self, Line};
 
 pub(crate) struct State<'a> {
     pub(crate) surface: wgpu::Surface<'a>,
@@ -6,6 +9,10 @@ pub(crate) struct State<'a> {
     pub(crate) queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) size: winit::dpi::PhysicalSize<u32>,
+    pub(crate) num_indices: u32,
+    pub(crate) vertex_buffer: wgpu::Buffer,
+    pub(crate) index_buffer: wgpu::Buffer,
+    pub(crate) render_pipeline: wgpu::RenderPipeline,
 }
 
 impl<'a> State<'a> {
@@ -63,48 +70,65 @@ impl<'a> State<'a> {
 
         surface.configure(&device, &config);
 
-        // let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        //     label: Some("Shader"),
-        //     source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        // });
+        let line = Line::Horizontal(0.8);
+        let line_vertices = line.vertices(0.05, (-1., 1.));
+        let line_indices = Line::indices();
+        let num_indices = line_indices.len() as u32;
+        // let num_vertices = line_vertices.len() as u32;
 
-        // let render_pipeline_layout =
-        //     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        //         label: Some("Render Pipeline Layout"),
-        //         bind_group_layouts: &[],
-        //         push_constant_ranges: &[],
-        //     });
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(&line_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(&line_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
 
-        // let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        //     label: Some("Render Pipeline"),
-        //     layout: Some(&render_pipeline_layout),
-        //     vertex: wgpu::VertexState {
-        //         module: &shader,
-        //         entry_point: "vs_main",
-        //         buffers: &[],
-        //     },
-        //     fragment: Some(wgpu::FragmentState {
-        //         module: &shader,
-        //         entry_point: "fs_main",
-        //         targets: &[Some(wgpu::ColorTargetState {
-        //             format: config.format,
-        //             blend: Some(wgpu::BlendState::REPLACE),
-        //             write_mask: wgpu::ColorWrites::ALL,
-        //         })],
-        //     }),
-        //     primitive: wgpu::PrimitiveState {
-        //         topology: wgpu::PrimitiveTopology::TriangleList,
-        //         strip_index_format: None,
-        //         front_face: wgpu::FrontFace::Ccw,
-        //         cull_mode: None,
-        //         polygon_mode: wgpu::PolygonMode::Fill,
-        //         unclipped_depth: false,
-        //         conservative: false,
-        //     },
-        //     depth_stencil: None,
-        //     multisample: wgpu::MultisampleState::default(),
-        //     multiview: None,
-        // });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[line::Vertex::desc()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
 
         Self {
             surface,
@@ -112,6 +136,10 @@ impl<'a> State<'a> {
             queue,
             config,
             size,
+            num_indices,
+            vertex_buffer,
+            index_buffer,
+            render_pipeline,
         }
     }
 
@@ -138,18 +166,19 @@ impl<'a> State<'a> {
             });
 
         {
+            let bg_color = wgpu::Color {
+                r: 0.,
+                g: 0.005,
+                b: 0.06,
+                a: 1.0,
+            };
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.,
-                            g: 0.005,
-                            b: 0.06,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(bg_color),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -157,11 +186,11 @@ impl<'a> State<'a> {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            // render_pass.draw(, )
-            // render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_pipeline(&self.render_pipeline);
             // render_pass.set_bind_group(0, &self.locals_bind_group, &[]);
-            // render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            // render_pass.draw(0..self.num_vertices, 0..1);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16); // 1.
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
