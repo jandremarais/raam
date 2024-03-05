@@ -10,8 +10,10 @@ pub(crate) struct State<'a> {
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) size: winit::dpi::PhysicalSize<u32>,
     pub(crate) num_indices: u32,
+    pub(crate) instances: Vec<line::Instance>,
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
+    pub(crate) instance_buffer: wgpu::Buffer,
     pub(crate) render_pipeline: wgpu::RenderPipeline,
 }
 
@@ -70,11 +72,14 @@ impl<'a> State<'a> {
 
         surface.configure(&device, &config);
 
-        let line = Line::Horizontal(0.8);
-        let line_vertices = line.vertices(0.05, (-1., 1.));
+        let line = Line::Horizontal(0.0);
+        let line_vertices = line.vertices(0.01, (-1., 1.));
         let line_indices = Line::indices();
         let num_indices = line_indices.len() as u32;
-        // let num_vertices = line_vertices.len() as u32;
+
+        let instances: Vec<_> = (0..10)
+            .map(|i| line::Instance::new(1.0 - i as f32 / 5.))
+            .collect();
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -85,6 +90,11 @@ impl<'a> State<'a> {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(&line_indices),
             usage: wgpu::BufferUsages::INDEX,
+        });
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instances),
+            usage: wgpu::BufferUsages::VERTEX,
         });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -105,7 +115,7 @@ impl<'a> State<'a> {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[line::Vertex::desc()],
+                buffers: &[line::Vertex::desc(), line::Instance::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -137,8 +147,10 @@ impl<'a> State<'a> {
             config,
             size,
             num_indices,
+            instances,
             vertex_buffer,
             index_buffer,
+            instance_buffer,
             render_pipeline,
         }
     }
@@ -190,7 +202,8 @@ impl<'a> State<'a> {
             // render_pass.set_bind_group(0, &self.locals_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16); // 1.
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as _);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();

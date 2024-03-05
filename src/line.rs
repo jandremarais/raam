@@ -38,12 +38,6 @@ impl Line {
                 Vertex {
                     pos: [limits.0, *y - width],
                 },
-                // Vertex {
-                //     pos: [limits.1, *y],
-                // },
-                // Vertex {
-                //     pos: [limits.0, *y - width],
-                // },
                 Vertex {
                     pos: [limits.1, *y - width],
                 },
@@ -54,5 +48,30 @@ impl Line {
 
     pub(crate) fn indices() -> Vec<u16> {
         vec![0, 1, 2, 1, 2, 3]
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable, Debug)]
+pub(crate) struct Instance {
+    offset: f32,
+}
+
+impl Instance {
+    pub(crate) fn new(offset: f32) -> Self {
+        Self { offset }
+    }
+
+    pub(crate) fn desc() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<Instance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 1,
+                format: wgpu::VertexFormat::Float32,
+            }],
+        }
     }
 }
