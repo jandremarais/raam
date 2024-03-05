@@ -16,7 +16,6 @@ pub fn run() {
         .build(&event_loop)
         .expect("WindowBuilder failed");
     event_loop.set_control_flow(ControlFlow::Wait);
-    // event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut state = pollster::block_on(State::new(&window));
     event_loop
