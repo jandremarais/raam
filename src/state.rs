@@ -93,15 +93,15 @@ impl<'a> State<'a> {
             }],
             label: Some("camera_bind_group"),
         });
-        let camera_controller = CameraController::new(0.5);
+        let camera_controller = CameraController::new(10.);
 
         let line = Line::Horizontal(0.0);
-        let line_vertices = line.vertices(0.01, (-1., 0.5));
+        let line_vertices = line.vertices(2., (5., 400.));
         let line_indices = Line::indices();
         let num_indices = line_indices.len() as u32;
 
         let instances: Vec<_> = (0..10)
-            .map(|i| line::Instance::new(1.0 - i as f32 / 5.))
+            .map(|i| line::Instance::new(i as f32 * 30.))
             .collect();
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -243,10 +243,9 @@ impl<'a> State<'a> {
     }
 
     pub(crate) fn update(&mut self) {
-        self.camera_controller.update_camera(&mut self.camera);
+        self.camera_controller
+            .update_camera(&mut self.camera, self.size);
         self.camera_uniform = CameraUniform::from(&self.camera);
-        dbg!(&self.camera_uniform);
-        dbg!(&self.camera_controller);
         self.queue.write_buffer(
             &self.camera_buffer,
             0,

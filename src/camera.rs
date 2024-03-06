@@ -1,23 +1,30 @@
 use bytemuck::{Pod, Zeroable};
 use wgpu::{util::DeviceExt, Device};
-use winit::event::{MouseScrollDelta, WindowEvent};
+use winit::{
+    dpi::PhysicalSize,
+    event::{MouseScrollDelta, WindowEvent},
+};
 
 #[derive(Default)]
 pub(crate) struct Camera {
     x: f32,
     y: f32,
+    width: f32,
+    height: f32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub(crate) struct CameraUniform {
     pub(crate) offset: [f32; 2],
+    pub(crate) size: [f32; 2],
 }
 
 impl From<&Camera> for CameraUniform {
     fn from(value: &Camera) -> Self {
         CameraUniform {
             offset: [value.x, value.y],
+            size: [value.width, value.height],
         }
     }
 }
@@ -67,8 +74,8 @@ impl CameraController {
         match event {
             WindowEvent::MouseWheel { delta, .. } => match delta {
                 MouseScrollDelta::LineDelta(x, y) => {
-                    self.delta_x = *x;
-                    self.delta_y = *y;
+                    self.delta_x += *x;
+                    self.delta_y += *y;
                     true
                 }
                 _ => false,
@@ -77,8 +84,12 @@ impl CameraController {
         }
     }
 
-    pub(crate) fn update_camera(&self, camera: &mut Camera) {
-        camera.x += self.delta_x * self.speed;
-        camera.y += self.delta_y * self.speed;
+    pub(crate) fn update_camera(&mut self, camera: &mut Camera, size: PhysicalSize<u32>) {
+        camera.x += self.delta_x.powi(2) * self.speed * self.delta_x.signum();
+        camera.y += self.delta_y.powi(2) * self.speed * self.delta_y.signum();
+        camera.width = size.width as f32;
+        camera.height = size.height as f32;
+        self.delta_x = 0.0;
+        self.delta_y = 0.0;
     }
 }
