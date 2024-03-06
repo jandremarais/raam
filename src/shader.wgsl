@@ -1,3 +1,9 @@
+struct CameraUniform {
+	offset: vec2<f32>,
+}
+@group(0) @binding(0)
+var<uniform> camera: CameraUniform;
+
 struct VertexInput {
 	@location(0) pos: vec2<f32>,
 }
@@ -17,7 +23,7 @@ fn vs_main(
 	instance: InstanceInput,
 ) -> VertexOutput {
 	var out: VertexOutput;
-	out.clip_position = vec4f(model.pos.x, model.pos.y + instance.offset, 0.0, 1.0);
+	out.clip_position = vec4f(model.pos.x + camera.offset.x, model.pos.y + instance.offset - camera.offset.y, 0.0, 1.0);
 	return out;
 }
 

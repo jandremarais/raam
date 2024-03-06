@@ -4,6 +4,7 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
+mod camera;
 mod line;
 mod state;
 

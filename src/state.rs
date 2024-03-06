@@ -1,7 +1,10 @@
 use wgpu::util::DeviceExt;
 use winit::{event::WindowEvent, window::Window};
 
-use crate::line::{self, Line};
+use crate::{
+    camera::{Camera, CameraController, CameraUniform},
+    line::{self, Line},
+};
 
 pub(crate) struct State<'a> {
     pub(crate) surface: wgpu::Surface<'a>,
@@ -9,6 +12,11 @@ pub(crate) struct State<'a> {
     pub(crate) queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) size: winit::dpi::PhysicalSize<u32>,
+    camera: Camera,
+    camera_uniform: CameraUniform,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
+    camera_controller: CameraController,
     pub(crate) num_indices: u32,
     pub(crate) instances: Vec<line::Instance>,
     pub(crate) vertex_buffer: wgpu::Buffer,
@@ -72,8 +80,23 @@ impl<'a> State<'a> {
 
         surface.configure(&device, &config);
 
+        let camera = Camera::default();
+        let camera_uniform = CameraUniform::from(&camera);
+        let camera_buffer = camera_uniform.to_buffer(&device);
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&CameraUniform::bind_group_layout_desc());
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+            label: Some("camera_bind_group"),
+        });
+        let camera_controller = CameraController::new(0.5);
+
         let line = Line::Horizontal(0.0);
-        let line_vertices = line.vertices(0.01, (-1., 1.));
+        let line_vertices = line.vertices(0.01, (-1., 0.5));
         let line_indices = Line::indices();
         let num_indices = line_indices.len() as u32;
 
@@ -105,7 +128,7 @@ impl<'a> State<'a> {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&camera_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -146,6 +169,11 @@ impl<'a> State<'a> {
             queue,
             config,
             size,
+            camera,
+            camera_uniform,
+            camera_buffer,
+            camera_bind_group,
+            camera_controller,
             num_indices,
             instances,
             vertex_buffer,
@@ -199,7 +227,7 @@ impl<'a> State<'a> {
                 timestamp_writes: None,
             });
             render_pass.set_pipeline(&self.render_pipeline);
-            // render_pass.set_bind_group(0, &self.locals_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16); // 1.
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
@@ -211,8 +239,16 @@ impl<'a> State<'a> {
     }
 
     pub(crate) fn input(&mut self, event: &WindowEvent) -> bool {
-        false
+        self.camera_controller.process_event(event)
     }
 
-    pub(crate) fn update(&mut self) {}
+    pub(crate) fn update(&mut self) {
+        self.camera_controller.update_camera(&mut self.camera);
+        self.camera_uniform = CameraUniform::from(&self.camera);
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
+    }
 }
