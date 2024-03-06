@@ -245,6 +245,8 @@ impl<'a> State<'a> {
     pub(crate) fn update(&mut self) {
         self.camera_controller.update_camera(&mut self.camera);
         self.camera_uniform = CameraUniform::from(&self.camera);
+        dbg!(&self.camera_uniform);
+        dbg!(&self.camera_controller);
         self.queue.write_buffer(
             &self.camera_buffer,
             0,

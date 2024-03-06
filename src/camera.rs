@@ -9,7 +9,7 @@ pub(crate) struct Camera {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub(crate) struct CameraUniform {
     pub(crate) offset: [f32; 2],
 }
@@ -48,11 +48,11 @@ impl CameraUniform {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct CameraController {
-    speed: f32,
-    delta_x: f32,
-    delta_y: f32,
+    pub(crate) speed: f32,
+    pub(crate) delta_x: f32,
+    pub(crate) delta_y: f32,
 }
 
 impl CameraController {
