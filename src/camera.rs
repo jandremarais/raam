@@ -72,14 +72,14 @@ impl CameraController {
 
     pub(crate) fn process_event(&mut self, event: &WindowEvent) -> bool {
         match event {
-            WindowEvent::MouseWheel { delta, .. } => match delta {
-                MouseScrollDelta::LineDelta(x, y) => {
-                    self.delta_x += *x;
-                    self.delta_y += *y;
-                    true
-                }
-                _ => false,
-            },
+            WindowEvent::MouseWheel {
+                delta: MouseScrollDelta::LineDelta(x, y),
+                ..
+            } => {
+                self.delta_x += *x;
+                self.delta_y += *y;
+                true
+            }
             _ => false,
         }
     }
