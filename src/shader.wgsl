@@ -10,7 +10,8 @@ struct VertexInput {
 }
 
 struct InstanceInput {
-	@location(1) offset: f32,
+	@location(1) offset: vec2<f32>,
+	@location(2) scale: vec2<f32>,
 }
 
 struct VertexOutput {
@@ -32,7 +33,8 @@ fn vs_main(
 	instance: InstanceInput,
 ) -> VertexOutput {
 	var out: VertexOutput;
-	out.clip_position = position_from_screen(vec2f(model.pos.x, model.pos.y + instance.offset));
+	out.clip_position = position_from_screen(model.pos * instance.scale + instance.offset);
+	// out.clip_position = position_from_screen(model.pos + instance.offset);
 	return out;
 }
 

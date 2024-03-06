@@ -3,7 +3,7 @@ use winit::{event::WindowEvent, window::Window};
 
 use crate::{
     camera::{Camera, CameraController, CameraUniform},
-    line::{self, Line},
+    line::{self},
 };
 
 pub(crate) struct State<'a> {
@@ -18,7 +18,7 @@ pub(crate) struct State<'a> {
     camera_bind_group: wgpu::BindGroup,
     camera_controller: CameraController,
     pub(crate) num_indices: u32,
-    pub(crate) instances: Vec<line::Instance>,
+    pub(crate) line_instances: Vec<line::Instance>,
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) instance_buffer: wgpu::Buffer,
@@ -94,28 +94,42 @@ impl<'a> State<'a> {
         });
         let camera_controller = CameraController::new(10.);
 
-        let line = Line::Horizontal(0.0);
-        let line_vertices = line.vertices(2., (5., 400.));
-        let line_indices = Line::indices();
+        // let line = Line::Horizontal(0.0);
+        let line_vertices = line::VERTICES;
+        let line_indices = line::INDICES;
         let num_indices = line_indices.len() as u32;
 
-        let instances: Vec<_> = (0..10)
-            .map(|i| line::Instance::new(i as f32 * 30.))
+        // TODO: put these params elsewhere
+        let row_height = 20.0;
+        let col_width = 100.0;
+        let line_width = 2.;
+        let ncols = 3;
+        let nrows = 20;
+        let xlim = ncols as f32 * col_width + line_width;
+        let ylim = nrows as f32 * row_height + line_width;
+        let hlines: Vec<_> = (0..nrows + 1)
+            .map(|i| line::Instance::new((0., i as f32 * row_height), (xlim, line_width)))
             .collect();
+        let vlines: Vec<_> = (0..ncols + 1)
+            .map(|i| line::Instance::new((i as f32 * col_width, 0.), (line_width, ylim)))
+            .collect();
+        let mut line_instances = Vec::new();
+        line_instances.extend_from_slice(&hlines);
+        line_instances.extend_from_slice(&vlines);
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&line_vertices),
+            contents: bytemuck::cast_slice(line_vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&line_indices),
+            contents: bytemuck::cast_slice(line_indices),
             usage: wgpu::BufferUsages::INDEX,
         });
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instances),
+            contents: bytemuck::cast_slice(&line_instances),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -174,7 +188,7 @@ impl<'a> State<'a> {
             camera_bind_group,
             camera_controller,
             num_indices,
-            instances,
+            line_instances,
             vertex_buffer,
             index_buffer,
             instance_buffer,
@@ -230,7 +244,7 @@ impl<'a> State<'a> {
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16); // 1.
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as _);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.line_instances.len() as _);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
