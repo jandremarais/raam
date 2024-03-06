@@ -6,7 +6,7 @@ It is built with winit and wgpu.
 
 Can draw horizontal lines using vertex, index and instancing buffers.
 
-![](raam_20240305.png)
+![](./screencaps/raam_20240306.gif)
 
 ## Usage 
 
