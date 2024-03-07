@@ -34,13 +34,15 @@ pub(crate) const INDICES: &[u16] = &[0, 1, 2, 1, 2, 3];
 pub(crate) struct Instance {
     offset: [f32; 2],
     scale: [f32; 2],
+    alpha: f32,
 }
 
 impl Instance {
-    pub(crate) fn new(offset: (f32, f32), scale: (f32, f32)) -> Self {
+    pub(crate) fn new(offset: (f32, f32), scale: (f32, f32), alpha: f32) -> Self {
         Self {
             offset: [offset.0, offset.1],
             scale: [scale.0, scale.1],
+            alpha,
         }
     }
 
@@ -59,6 +61,11 @@ impl Instance {
                     offset: mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
                     shader_location: 2,
                     format: wgpu::VertexFormat::Float32x2,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32,
                 },
             ],
         }

@@ -1,3 +1,4 @@
+use cosmic_text::{Attrs, FontSystem, Metrics, SwashCache};
 use wgpu::util::DeviceExt;
 use winit::{event::WindowEvent, window::Window};
 
@@ -94,7 +95,6 @@ impl<'a> State<'a> {
         });
         let camera_controller = CameraController::new(10.);
 
-        // let line = Line::Horizontal(0.0);
         let line_vertices = line::VERTICES;
         let line_indices = line::INDICES;
         let num_indices = line_indices.len() as u32;
@@ -103,19 +103,49 @@ impl<'a> State<'a> {
         let row_height = 20.0;
         let col_width = 100.0;
         let line_width = 2.;
-        let ncols = 100;
-        let nrows = 1000000;
+        let ncols = 10;
+        let nrows = 100;
         let xlim = ncols as f32 * col_width + line_width;
         let ylim = nrows as f32 * row_height + line_width;
         let hlines: Vec<_> = (0..nrows + 1)
-            .map(|i| line::Instance::new((0., i as f32 * row_height), (xlim, line_width)))
+            .map(|i| line::Instance::new((0., i as f32 * row_height), (xlim, line_width), 255.))
             .collect();
         let vlines: Vec<_> = (0..ncols + 1)
-            .map(|i| line::Instance::new((i as f32 * col_width, 0.), (line_width, ylim)))
+            .map(|i| line::Instance::new((i as f32 * col_width, 0.), (line_width, ylim), 255.))
             .collect();
         let mut line_instances = Vec::new();
         line_instances.extend_from_slice(&hlines);
         line_instances.extend_from_slice(&vlines);
+
+        // text stuff
+
+        let mut font_system = FontSystem::new();
+        let mut swash_cache = SwashCache::new();
+        let metrics = Metrics::new(12.0, 20.);
+        let mut buffer = cosmic_text::Buffer::new(&mut font_system, metrics);
+        let mut buffer = buffer.borrow_with(&mut font_system);
+        buffer.set_size(col_width, row_height);
+        let attrs = Attrs::new();
+        let text_color = cosmic_text::Color::rgb(0xFF, 0xFF, 0xFF);
+
+        for i in 0..ncols {
+            for j in 0..nrows {
+                buffer.set_text(&format!("data {i}"), attrs, cosmic_text::Shaping::Advanced);
+                buffer.shape_until_scroll(true);
+
+                buffer.draw(&mut swash_cache, text_color, |x, y, w, h, color| {
+                    line_instances.push(line::Instance::new(
+                        (
+                            x as f32 + line_width + 1. + i as f32 * col_width,
+                            y as f32 + line_width + j as f32 * row_height,
+                        ),
+                        (w as f32, h as f32),
+                        color.a() as f32,
+                    ));
+                });
+            }
+        }
+        // <-- end
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -158,7 +188,7 @@ impl<'a> State<'a> {
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
