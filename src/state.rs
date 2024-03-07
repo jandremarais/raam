@@ -103,8 +103,8 @@ impl<'a> State<'a> {
         let row_height = 20.0;
         let col_width = 100.0;
         let line_width = 2.;
-        let ncols = 3;
-        let nrows = 20;
+        let ncols = 100;
+        let nrows = 1000000;
         let xlim = ncols as f32 * col_width + line_width;
         let ylim = nrows as f32 * row_height + line_width;
         let hlines: Vec<_> = (0..nrows + 1)
