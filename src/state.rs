@@ -1,3 +1,7 @@
+use glyphon::{
+    Attrs, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache, TextArea, TextAtlas,
+    TextBounds, TextRenderer,
+};
 use wgpu::util::DeviceExt;
 use winit::{event::WindowEvent, window::Window};
 
@@ -23,6 +27,12 @@ pub(crate) struct State<'a> {
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) instance_buffer: wgpu::Buffer,
     pub(crate) render_pipeline: wgpu::RenderPipeline,
+    cache: SwashCache,
+    text_renderer: TextRenderer,
+    buffer: glyphon::Buffer,
+    buffer2: glyphon::Buffer,
+    font_system: FontSystem,
+    atlas: TextAtlas,
 }
 
 impl<'a> State<'a> {
@@ -94,7 +104,6 @@ impl<'a> State<'a> {
         });
         let camera_controller = CameraController::new(10.);
 
-        // let line = Line::Horizontal(0.0);
         let line_vertices = line::VERTICES;
         let line_indices = line::INDICES;
         let num_indices = line_indices.len() as u32;
@@ -103,8 +112,8 @@ impl<'a> State<'a> {
         let row_height = 20.0;
         let col_width = 100.0;
         let line_width = 2.;
-        let ncols = 3;
-        let nrows = 20;
+        let ncols = 50;
+        let nrows = 1_000_000;
         let xlim = ncols as f32 * col_width + line_width;
         let ylim = nrows as f32 * row_height + line_width;
         let hlines: Vec<_> = (0..nrows + 1)
@@ -176,6 +185,34 @@ impl<'a> State<'a> {
             multiview: None,
         });
 
+        // text stuff
+        let mut font_system = FontSystem::new();
+        let cache = SwashCache::new();
+        let mut atlas = TextAtlas::new(&device, &queue, surface_format);
+        let text_renderer =
+            TextRenderer::new(&mut atlas, &device, wgpu::MultisampleState::default(), None);
+        let mut buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(12.0, 18.0));
+
+        let scale_factor = window.scale_factor();
+        let physical_width = (size.width as f64 * scale_factor) as f32;
+        let physical_height = (size.height as f64 * scale_factor) as f32;
+
+        buffer.set_size(&mut font_system, physical_width, physical_height);
+        buffer.set_text(&mut font_system, "Hello world! 👋\nThis is rendered with 🦅 glyphon 🦁\nThe text below should be partially clipped.\na b c d e f g h i j k l m n o p q r s t u v w x y z", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+        buffer.shape_until_scroll(&mut font_system);
+
+        let mut buffer2 = glyphon::Buffer::new(&mut font_system, Metrics::new(12.0, 18.0));
+        buffer2.set_size(&mut font_system, physical_width, physical_height);
+        buffer2.set_text(
+            &mut font_system,
+            "Another 1",
+            Attrs::new().family(Family::SansSerif),
+            Shaping::Advanced,
+        );
+        buffer2.shape_until_scroll(&mut font_system);
+
+        // end
+
         Self {
             surface,
             device,
@@ -193,6 +230,12 @@ impl<'a> State<'a> {
             index_buffer,
             instance_buffer,
             render_pipeline,
+            cache,
+            text_renderer,
+            buffer,
+            buffer2,
+            font_system,
+            atlas,
         }
     }
 
@@ -206,6 +249,38 @@ impl<'a> State<'a> {
     }
 
     pub(crate) fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        self.text_renderer
+            .prepare(
+                &self.device,
+                &self.queue,
+                &mut self.font_system,
+                &mut self.atlas,
+                Resolution {
+                    width: self.size.width,
+                    height: self.size.height,
+                },
+                [
+                    TextArea {
+                        buffer: &self.buffer,
+                        left: self.camera_uniform.offset[0] + 3.0,
+                        top: self.camera_uniform.offset[1] + 20.0,
+                        scale: 1.0,
+                        bounds: TextBounds::default(),
+                        default_color: glyphon::Color::rgb(255, 255, 255),
+                    },
+                    TextArea {
+                        buffer: &self.buffer2,
+                        left: 50.0,
+                        top: 200.0,
+                        scale: 1.0,
+                        bounds: TextBounds::default(),
+                        default_color: glyphon::Color::rgb(255, 255, 255),
+                    },
+                ],
+                &mut self.cache,
+            )
+            .unwrap();
+
         let output = self.surface.get_current_texture()?;
 
         let view = output
@@ -245,9 +320,13 @@ impl<'a> State<'a> {
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16); // 1.
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.draw_indexed(0..self.num_indices, 0, 0..self.line_instances.len() as _);
+            self.text_renderer
+                .render(&self.atlas, &mut render_pass)
+                .unwrap();
         }
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+        self.atlas.trim();
         Ok(())
     }
 

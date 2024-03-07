@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use state::State;
 use winit::{
     event::{Event, WindowEvent},
@@ -32,6 +34,7 @@ pub fn run() {
                         WindowEvent::Resized(physical_size) => state.resize(*physical_size),
                         WindowEvent::ScaleFactorChanged { .. } => state.resize(window.inner_size()),
                         WindowEvent::RedrawRequested => {
+                            let start = Instant::now();
                             state.update();
                             match state.render() {
                                 Ok(_) => {}
@@ -39,6 +42,7 @@ pub fn run() {
                                 Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
                                 Err(e) => eprintln!("{:?}", e),
                             }
+                            println!("render took {:?}", start.elapsed());
                         }
                         _ => {}
                     }
