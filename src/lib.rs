@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use state::State;
 use winit::{
     event::{Event, WindowEvent},
@@ -5,6 +7,7 @@ use winit::{
     window::WindowBuilder,
 };
 mod camera;
+mod grid;
 mod line;
 mod state;
 
@@ -33,12 +36,14 @@ pub fn run() {
                         WindowEvent::ScaleFactorChanged { .. } => state.resize(window.inner_size()),
                         WindowEvent::RedrawRequested => {
                             state.update();
+                            let start = Instant::now();
                             match state.render() {
                                 Ok(_) => {}
                                 Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
                                 Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
                                 Err(e) => eprintln!("{:?}", e),
                             }
+                            println!("render took: {:?}", start.elapsed());
                         }
                         _ => {}
                     }

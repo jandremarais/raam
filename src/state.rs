@@ -1,9 +1,12 @@
+use std::time::Instant;
+
 use cosmic_text::{Attrs, FontSystem, Metrics, SwashCache};
 use wgpu::util::DeviceExt;
 use winit::{event::WindowEvent, window::Window};
 
 use crate::{
     camera::{Camera, CameraController, CameraUniform},
+    grid::Grid,
     line::{self},
 };
 
@@ -20,10 +23,16 @@ pub(crate) struct State<'a> {
     camera_controller: CameraController,
     pub(crate) num_indices: u32,
     pub(crate) line_instances: Vec<line::Instance>,
+    grid: Grid,
+    grid_buffer_size: u64,
+    font_system: FontSystem,
+    swash_cache: SwashCache,
+    text_buffer: cosmic_text::Buffer,
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) instance_buffer: wgpu::Buffer,
     pub(crate) render_pipeline: wgpu::RenderPipeline,
+    last_reload: f32,
 }
 
 impl<'a> State<'a> {
@@ -98,46 +107,33 @@ impl<'a> State<'a> {
         let line_vertices = line::VERTICES;
         let line_indices = line::INDICES;
         let num_indices = line_indices.len() as u32;
+        let grid = Grid::new(100, 10, 20., 100., 2.);
 
-        // TODO: put these params elsewhere
-        let row_height = 20.0;
-        let col_width = 100.0;
-        let line_width = 2.;
-        let ncols = 10;
-        let nrows = 100;
-        let xlim = ncols as f32 * col_width + line_width;
-        let ylim = nrows as f32 * row_height + line_width;
-        let hlines: Vec<_> = (0..nrows + 1)
-            .map(|i| line::Instance::new((0., i as f32 * row_height), (xlim, line_width), 255.))
-            .collect();
-        let vlines: Vec<_> = (0..ncols + 1)
-            .map(|i| line::Instance::new((i as f32 * col_width, 0.), (line_width, ylim), 255.))
-            .collect();
-        let mut line_instances = Vec::new();
-        line_instances.extend_from_slice(&hlines);
-        line_instances.extend_from_slice(&vlines);
+        // TODO: make as method of Grid
+        let mut line_instances = grid.line_instances();
+
+        let grid_buffer_size = 4 * line_instances.len() as u64;
 
         // text stuff
-
         let mut font_system = FontSystem::new();
         let mut swash_cache = SwashCache::new();
         let metrics = Metrics::new(12.0, 20.);
-        let mut buffer = cosmic_text::Buffer::new(&mut font_system, metrics);
-        let mut buffer = buffer.borrow_with(&mut font_system);
-        buffer.set_size(col_width, row_height);
+        let mut text_buffer = cosmic_text::Buffer::new(&mut font_system, metrics);
+        let mut text_buffer_b = text_buffer.borrow_with(&mut font_system);
+        text_buffer_b.set_size(grid.col_width, grid.row_height);
         let attrs = Attrs::new();
         let text_color = cosmic_text::Color::rgb(0xFF, 0xFF, 0xFF);
 
-        for i in 0..ncols {
-            for j in 0..nrows {
-                buffer.set_text(&format!("data {i}"), attrs, cosmic_text::Shaping::Advanced);
-                buffer.shape_until_scroll(true);
+        for i in 0..grid.ncols {
+            for j in 0..grid.nrows {
+                text_buffer_b.set_text(&format!("data {i}"), attrs, cosmic_text::Shaping::Advanced);
+                text_buffer_b.shape_until_scroll(true);
 
-                buffer.draw(&mut swash_cache, text_color, |x, y, w, h, color| {
+                text_buffer_b.draw(&mut swash_cache, text_color, |x, y, w, h, color| {
                     line_instances.push(line::Instance::new(
                         (
-                            x as f32 + line_width + 1. + i as f32 * col_width,
-                            y as f32 + line_width + j as f32 * row_height,
+                            x as f32 + grid.line_width + 1. + i as f32 * grid.col_width,
+                            y as f32 + grid.line_width + j as f32 * grid.row_height,
                         ),
                         (w as f32, h as f32),
                         color.a() as f32,
@@ -160,7 +156,7 @@ impl<'a> State<'a> {
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(&line_instances),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -219,10 +215,16 @@ impl<'a> State<'a> {
             camera_controller,
             num_indices,
             line_instances,
+            grid,
+            grid_buffer_size,
+            font_system,
+            swash_cache,
+            text_buffer,
             vertex_buffer,
             index_buffer,
             instance_buffer,
             render_pipeline,
+            last_reload: 0.,
         }
     }
 
@@ -286,6 +288,7 @@ impl<'a> State<'a> {
     }
 
     pub(crate) fn update(&mut self) {
+        let start = Instant::now();
         self.camera_controller
             .update_camera(&mut self.camera, self.size);
         self.camera_uniform = CameraUniform::from(&self.camera);
@@ -294,5 +297,47 @@ impl<'a> State<'a> {
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
+
+        // self.line_instances
+        if (self.last_reload - self.camera.y).abs() > 100. {
+            let mut text_buffer_b = self.text_buffer.borrow_with(&mut self.font_system);
+            let attrs = Attrs::new();
+            let text_color = cosmic_text::Color::rgb(0xFF, 0xFF, 0xFF);
+            let mut line_instances = vec![];
+            for i in 0..10 {
+                // let i = 0;
+                for j in 0..100 {
+                    // let j = 0;
+                    text_buffer_b.set_text(
+                        &format!("data {i}"),
+                        attrs,
+                        cosmic_text::Shaping::Advanced,
+                    );
+                    text_buffer_b.shape_until_scroll(true);
+
+                    text_buffer_b.draw(&mut self.swash_cache, text_color, |x, y, w, h, color| {
+                        line_instances.push(line::Instance::new(
+                            (
+                                x as f32 + 2. + 1. + i as f32 * 100.,
+                                y as f32 + 2. + j as f32 * 20.,
+                            ),
+                            (w as f32, h as f32),
+                            color.a() as f32,
+                        ));
+                    });
+                }
+            }
+            let grid_offset = 20 * self.grid.nlines() as u64;
+            self.queue.write_buffer(
+                &self.instance_buffer,
+                grid_offset,
+                bytemuck::cast_slice(&line_instances),
+            );
+            println!("new data!");
+            self.last_reload = self.camera.y;
+        }
+        println!("update took: {:?}", start.elapsed());
+        // let tmp: wgpu::Buffer = self.instance_buffer.slice(0..12).into();
+        // tmp.into()
     }
 }

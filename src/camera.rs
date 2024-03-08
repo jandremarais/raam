@@ -7,10 +7,10 @@ use winit::{
 
 #[derive(Default)]
 pub(crate) struct Camera {
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
 }
 
 #[repr(C)]
