@@ -43,7 +43,7 @@ pub fn run() {
                                 Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
                                 Err(e) => eprintln!("{:?}", e),
                             }
-                            println!("render took: {:?}", start.elapsed());
+                            // println!("render took: {:?}", start.elapsed());
                         }
                         _ => {}
                     }

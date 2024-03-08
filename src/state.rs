@@ -107,9 +107,7 @@ impl<'a> State<'a> {
         let line_vertices = line::VERTICES;
         let line_indices = line::INDICES;
         let num_indices = line_indices.len() as u32;
-        let grid = Grid::new(100, 10, 20., 100., 2.);
-
-        // TODO: make as method of Grid
+        let grid = Grid::new(1000, 10, 20., 100., 2.);
         let mut line_instances = grid.line_instances();
 
         let grid_buffer_size = 4 * line_instances.len() as u64;
@@ -125,7 +123,8 @@ impl<'a> State<'a> {
         let text_color = cosmic_text::Color::rgb(0xFF, 0xFF, 0xFF);
 
         for i in 0..grid.ncols {
-            for j in 0..grid.nrows {
+            // for j in 0..grid.nrows {
+            for j in 0..50 {
                 text_buffer_b.set_text(&format!("data {i}"), attrs, cosmic_text::Shaping::Advanced);
                 text_buffer_b.shape_until_scroll(true);
 
@@ -298,15 +297,17 @@ impl<'a> State<'a> {
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
 
-        // self.line_instances
-        if (self.last_reload - self.camera.y).abs() > 100. {
+        let total_height = self.grid.row_height;
+        if (self.last_reload - self.camera.y).abs() > (total_height * 10.) {
             let mut text_buffer_b = self.text_buffer.borrow_with(&mut self.font_system);
             let attrs = Attrs::new();
             let text_color = cosmic_text::Color::rgb(0xFF, 0xFF, 0xFF);
             let mut line_instances = vec![];
+            let start_row = (self.camera.y.abs() / total_height) as usize;
+            // dbg!(start_row, self.camera.y, total_height);
             for i in 0..10 {
                 // let i = 0;
-                for j in 0..100 {
+                for j in start_row..(start_row + 50) {
                     // let j = 0;
                     text_buffer_b.set_text(
                         &format!("data {i}"),
@@ -318,8 +319,11 @@ impl<'a> State<'a> {
                     text_buffer_b.draw(&mut self.swash_cache, text_color, |x, y, w, h, color| {
                         line_instances.push(line::Instance::new(
                             (
-                                x as f32 + 2. + 1. + i as f32 * 100.,
-                                y as f32 + 2. + j as f32 * 20.,
+                                x as f32
+                                    + 1.
+                                    + i as f32 * self.grid.col_width
+                                    + self.grid.line_width,
+                                y as f32 + j as f32 * self.grid.row_height + self.grid.line_width,
                             ),
                             (w as f32, h as f32),
                             color.a() as f32,
@@ -333,10 +337,15 @@ impl<'a> State<'a> {
                 grid_offset,
                 bytemuck::cast_slice(&line_instances),
             );
-            println!("new data!");
-            self.last_reload = self.camera.y;
+            self.last_reload = -1. * (start_row as f32 * total_height);
+            println!(
+                "reloading at {} for rows in {} {}",
+                self.camera.y,
+                start_row,
+                start_row + 50
+            );
         }
-        println!("update took: {:?}", start.elapsed());
+        // println!("update took: {:?}", start.elapsed());
         // let tmp: wgpu::Buffer = self.instance_buffer.slice(0..12).into();
         // tmp.into()
     }
