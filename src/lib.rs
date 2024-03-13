@@ -1,18 +1,18 @@
-use std::time::Instant;
-
 use state::State;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
-mod camera;
-mod grid;
-mod line;
+// mod camera;
+// mod grid;
+// mod line;
 mod state;
 
 pub fn run() {
     env_logger::init();
+
+    // hack to not let window hang for a long time at startup
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..Default::default()
@@ -33,7 +33,7 @@ pub fn run() {
                 ref event,
                 window_id,
             } if window_id == window.id() => {
-                if state.input(event) {
+                if state.process_input(event) {
                     window.request_redraw();
                 } else {
                     match event {
@@ -41,7 +41,7 @@ pub fn run() {
                         WindowEvent::Resized(physical_size) => state.resize(*physical_size),
                         WindowEvent::ScaleFactorChanged { .. } => state.resize(window.inner_size()),
                         WindowEvent::RedrawRequested => {
-                            state.update();
+                            state.prepare();
                             match state.render() {
                                 Ok(_) => {}
                                 Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
