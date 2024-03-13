@@ -13,6 +13,10 @@ mod state;
 
 pub fn run() {
     env_logger::init();
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..Default::default()
+    });
 
     let event_loop = EventLoop::new().expect("EventLoop failed");
     let window = WindowBuilder::new()
@@ -22,34 +26,31 @@ pub fn run() {
         .expect("WindowBuilder failed");
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut state = pollster::block_on(State::new(&window));
+    let mut state = pollster::block_on(State::new(&window, instance));
     event_loop
         .run(|event, elwt| match event {
             Event::WindowEvent {
                 ref event,
                 window_id,
             } if window_id == window.id() => {
-                if !state.input(event) {
+                if state.input(event) {
+                    window.request_redraw();
+                } else {
                     match event {
                         WindowEvent::CloseRequested => elwt.exit(),
                         WindowEvent::Resized(physical_size) => state.resize(*physical_size),
                         WindowEvent::ScaleFactorChanged { .. } => state.resize(window.inner_size()),
                         WindowEvent::RedrawRequested => {
                             state.update();
-                            let start = Instant::now();
                             match state.render() {
                                 Ok(_) => {}
                                 Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
                                 Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
                                 Err(e) => eprintln!("{:?}", e),
                             }
-                            // println!("render took: {:?}", start.elapsed());
                         }
                         _ => {}
                     }
-                } else {
-                    // TODO!: is this the right place to put it. Will an input event always need to trigger it?
-                    window.request_redraw();
                 }
             }
             _ => {}

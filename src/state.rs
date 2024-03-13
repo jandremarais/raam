@@ -36,13 +36,8 @@ pub(crate) struct State<'a> {
 }
 
 impl<'a> State<'a> {
-    pub(crate) async fn new(window: &'a Window) -> Self {
+    pub(crate) async fn new(window: &'a Window, instance: wgpu::Instance) -> Self {
         let size = window.inner_size();
-
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
 
         let surface = instance.create_surface(window).unwrap();
 
