@@ -26,7 +26,12 @@ pub fn run() {
         .expect("WindowBuilder failed");
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut state = pollster::block_on(State::new(&window, instance));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut state = rt.block_on(State::new(&window, instance));
+
     event_loop
         .run(|event, elwt| match event {
             Event::WindowEvent {

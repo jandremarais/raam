@@ -1,9 +1,23 @@
+use std::time::Instant;
+
+use datafusion::{
+    arrow::{
+        error::ArrowError,
+        record_batch::RecordBatch,
+        util::display::{ArrayFormatter, FormatOptions},
+    },
+    prelude::*,
+};
 use glyphon::{
     Attrs, FontSystem, Metrics, Resolution, SwashCache, TextArea, TextAtlas, TextBounds,
     TextRenderer,
 };
+use tokio::runtime::Builder;
 use wgpu::{MultisampleState, TextureFormat};
-use winit::{event::WindowEvent, window::Window};
+use winit::{
+    event::{MouseScrollDelta, WindowEvent},
+    window::Window,
+};
 
 pub(crate) struct State<'a> {
     pub(crate) surface: wgpu::Surface<'a>,
@@ -11,11 +25,55 @@ pub(crate) struct State<'a> {
     pub(crate) queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) size: winit::dpi::PhysicalSize<u32>,
+    // ctx: SessionContext,
     text_system: TextSystem,
+    offsets: Offsets,
+    query_tx: tokio::sync::mpsc::Sender<usize>,
+    results_rx: tokio::sync::mpsc::Receiver<Vec<RecordBatch>>,
+    last_update: usize,
+}
+
+struct Cell {
+    col: usize,
+    row: usize,
+    buffer: glyphon::Buffer,
+}
+
+impl Cell {
+    fn new(col: usize, row: usize, buffer: glyphon::Buffer) -> Self {
+        Self { col, row, buffer }
+    }
 }
 
 impl<'a> State<'a> {
     pub(crate) async fn new(window: &'a Window, instance: wgpu::Instance) -> Self {
+        let (query_tx, mut query_rx) = tokio::sync::mpsc::channel::<usize>(2);
+        let (results_tx, results_rx) = tokio::sync::mpsc::channel::<Vec<RecordBatch>>(2);
+
+        let rt = Builder::new_current_thread().enable_all().build().unwrap();
+        std::thread::spawn(move || {
+            rt.block_on(async move {
+                let ctx = SessionContext::new();
+                ctx.register_csv("example", "measurements.csv", CsvReadOptions::new())
+                    .await
+                    .unwrap();
+                let df = ctx.sql("SELECT * FROM example").await.unwrap();
+                while let Some(skip) = query_rx.recv().await {
+                    let now = Instant::now();
+                    let batches = df
+                        .clone()
+                        .limit(skip, Some(100))
+                        .unwrap()
+                        .collect()
+                        .await
+                        .unwrap();
+                    results_tx.send(batches).await.unwrap();
+                    println!("query done in: {:?}", now.elapsed());
+                }
+            })
+        });
+        println!("outside thread");
+
         let size = window.inner_size();
 
         let surface = instance.create_surface(window).unwrap();
@@ -64,6 +122,10 @@ impl<'a> State<'a> {
         surface.configure(&device, &config);
 
         let text_system = TextSystem::new(&device, &queue, surface_format);
+        query_tx.send(0).await.unwrap();
+        let last_update = 0;
+
+        let offsets = Offsets::default();
 
         Self {
             surface,
@@ -72,6 +134,10 @@ impl<'a> State<'a> {
             config,
             size,
             text_system,
+            offsets,
+            query_tx,
+            results_rx,
+            last_update,
         }
     }
 
@@ -122,20 +188,57 @@ impl<'a> State<'a> {
         }
         self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
+        self.text_system.atlas.trim(); // TODO: is this where the trim should go?
         Ok(())
     }
 
     pub(crate) fn process_input(&mut self, event: &WindowEvent) -> bool {
-        false
+        match event {
+            WindowEvent::MouseWheel {
+                delta: MouseScrollDelta::LineDelta(x, y),
+                ..
+            } => {
+                self.offsets.update(*x, *y, 10.);
+                true
+            }
+
+            _ => false,
+        }
     }
 
     pub(crate) fn prepare(&mut self) {
+        if let Ok(batches) = self.results_rx.try_recv() {
+            self.text_system.update_buffers(&batches, self.last_update);
+        }
+        let current_line = self.offsets.y / -14.;
+        if (current_line - self.last_update as f32).abs() > 50. {
+            dbg!(self.offsets.y, current_line, self.last_update);
+            self.query_tx.blocking_send(current_line as usize).unwrap();
+            self.last_update = current_line as usize;
+        }
         self.text_system.prepare(
             &self.device,
             &self.queue,
             self.config.width,
             self.config.height,
+            self.offsets,
         );
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+struct Offsets {
+    x: f32,
+    y: f32,
+}
+
+impl Offsets {
+    fn update(&mut self, x_delta: f32, y_delta: f32, speed: f32) {
+        self.y += speed * y_delta * y_delta * y_delta.signum();
+        self.x += speed * x_delta * x_delta * x_delta.signum();
+        // dbg!(self.y);
+        self.y = self.y.min(0.);
+        self.x = self.x.min(0.);
     }
 }
 
@@ -143,51 +246,104 @@ struct TextSystem {
     font_system: FontSystem,
     swash_cache: SwashCache,
     atlas: TextAtlas,
+    metrics: Metrics,
     renderer: TextRenderer,
-    buffer: glyphon::Buffer,
+    buffers: Vec<Cell>,
 }
 
 impl TextSystem {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: TextureFormat) -> Self {
-        let mut font_system = FontSystem::new();
+        let font_system = FontSystem::new();
         let swash_cache = SwashCache::new();
 
         let mut atlas = TextAtlas::new(device, queue, format);
         let metrics = Metrics::new(12.0, 14.);
         let renderer = TextRenderer::new(&mut atlas, device, MultisampleState::default(), None);
 
-        let mut buffer = glyphon::Buffer::new(&mut font_system, metrics);
-        buffer.set_size(&mut font_system, 100., 100.);
-        buffer.set_text(
-            &mut font_system,
-            "hello world",
-            Attrs::new(),
-            glyphon::Shaping::Advanced,
-        );
-
         Self {
             font_system,
             swash_cache,
             atlas,
+            metrics,
             renderer,
-            buffer,
+            buffers: vec![],
         }
     }
 
-    fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32) {
-        let areas = [TextArea {
-            buffer: &self.buffer,
-            left: 100.0,
-            top: 15.0,
-            scale: 1.0,
-            bounds: TextBounds {
-                left: 0,
-                top: 0,
-                right: i32::MAX,
-                bottom: i32::MAX,
-            },
-            default_color: glyphon::Color::rgb(255, 255, 255),
-        }];
+    fn update_buffers(&mut self, batches: &[RecordBatch], skip: usize) {
+        let now = Instant::now();
+        let format_options = FormatOptions::default();
+        let mut cells = Vec::new();
+        for (j, field) in batches[0].schema().fields().iter().enumerate() {
+            let mut buffer = glyphon::Buffer::new(&mut self.font_system, self.metrics);
+            let mut buffer_bor = buffer.borrow_with(&mut self.font_system);
+            buffer_bor.set_size(100., 14.);
+            buffer_bor.set_wrap(glyphon::Wrap::Glyph);
+            buffer_bor.set_text(field.name(), Attrs::new(), glyphon::Shaping::Advanced);
+            cells.push(Cell::new(j, 0, buffer));
+        }
+        for batch in batches.iter() {
+            let formatters = batch
+                .columns()
+                .iter()
+                .map(|c| ArrayFormatter::try_new(c.as_ref(), &format_options))
+                .collect::<Result<Vec<_>, ArrowError>>()
+                .unwrap();
+
+            for row in 0..batch.num_rows() {
+                for (j, formatter) in formatters.iter().enumerate() {
+                    let val = formatter.value(row);
+                    let mut buffer = glyphon::Buffer::new(&mut self.font_system, self.metrics);
+                    let mut buffer_bor = buffer.borrow_with(&mut self.font_system);
+                    buffer_bor.set_size(100., 14.);
+                    buffer_bor.set_wrap(glyphon::Wrap::Glyph);
+                    buffer_bor.set_text(&val.to_string(), Attrs::new(), glyphon::Shaping::Advanced);
+                    buffer_bor.shape_until(1);
+                    cells.push(Cell::new(j, row + 1 + skip, buffer));
+                }
+            }
+        }
+        println!("buffers took: {:?}", now.elapsed());
+
+        self.buffers = cells;
+    }
+
+    fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        offsets: Offsets,
+    ) {
+        let areas: Vec<_> = self
+            .buffers
+            .iter()
+            .map(|c| {
+                let (top, bound_top, default_color) = if c.row == 0 {
+                    (c.row as f32, 0, glyphon::Color::rgb(180, 180, 180))
+                } else {
+                    (
+                        offsets.y + (c.row as f32 * 14.),
+                        14,
+                        glyphon::Color::rgb(240, 240, 255),
+                    )
+                };
+                TextArea {
+                    buffer: &c.buffer,
+                    left: offsets.x + (c.col as f32 * 110.),
+                    top,
+                    scale: 1.0,
+                    bounds: TextBounds {
+                        left: 0,
+                        top: bound_top,
+                        right: i32::MAX,
+                        bottom: i32::MAX,
+                    },
+                    default_color,
+                }
+            })
+            .collect();
         self.renderer
             .prepare(
                 device,
