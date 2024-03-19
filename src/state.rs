@@ -12,7 +12,7 @@ use glyphon::{
     Attrs, FontSystem, Metrics, Resolution, SwashCache, TextArea, TextAtlas, TextBounds,
     TextRenderer,
 };
-use tokio::runtime::Builder;
+use tokio::{runtime::Builder, sync::oneshot};
 use wgpu::{MultisampleState, TextureFormat};
 use winit::{
     event::{MouseScrollDelta, WindowEvent},
@@ -49,6 +49,7 @@ impl<'a> State<'a> {
     pub(crate) async fn new(window: &'a Window, instance: wgpu::Instance) -> Self {
         let (query_tx, mut query_rx) = tokio::sync::mpsc::channel::<usize>(2);
         let (results_tx, results_rx) = tokio::sync::mpsc::channel::<Vec<RecordBatch>>(2);
+        let (field_tx, field_rx) = oneshot::channel();
 
         let rt = Builder::new_current_thread().enable_all().build().unwrap();
         std::thread::spawn(move || {
@@ -57,7 +58,18 @@ impl<'a> State<'a> {
                 ctx.register_csv("example", "measurements.csv", CsvReadOptions::new())
                     .await
                     .unwrap();
-                let df = ctx.sql("SELECT * FROM example").await.unwrap();
+                let df = ctx
+                    .sql("SELECT inlet_temperature, outlet_temperature, energy_usage FROM example")
+                    .await
+                    .unwrap();
+                let field_names = df
+                    .schema()
+                    .fields()
+                    .iter()
+                    .map(|f| f.name().clone())
+                    .collect();
+                field_tx.send(field_names).unwrap();
+
                 while let Some(skip) = query_rx.recv().await {
                     let now = Instant::now();
                     let batches = df
@@ -73,6 +85,7 @@ impl<'a> State<'a> {
             })
         });
         println!("outside thread");
+        let field_names = field_rx.await.unwrap();
 
         let size = window.inner_size();
 
@@ -121,7 +134,7 @@ impl<'a> State<'a> {
 
         surface.configure(&device, &config);
 
-        let text_system = TextSystem::new(&device, &queue, surface_format);
+        let text_system = TextSystem::new(&device, &queue, surface_format, field_names);
         query_tx.send(0).await.unwrap();
         let last_update = 0;
 
@@ -248,17 +261,36 @@ struct TextSystem {
     atlas: TextAtlas,
     metrics: Metrics,
     renderer: TextRenderer,
+    field_buffers: Vec<Cell>,
     buffers: Vec<Cell>,
 }
 
 impl TextSystem {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: TextureFormat) -> Self {
-        let font_system = FontSystem::new();
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: TextureFormat,
+        field_names: Vec<String>,
+    ) -> Self {
+        let mut font_system = FontSystem::new();
         let swash_cache = SwashCache::new();
 
         let mut atlas = TextAtlas::new(device, queue, format);
         let metrics = Metrics::new(12.0, 14.);
         let renderer = TextRenderer::new(&mut atlas, device, MultisampleState::default(), None);
+
+        let field_buffers = field_names
+            .into_iter()
+            .enumerate()
+            .map(|(j, f)| {
+                let mut buffer = glyphon::Buffer::new(&mut font_system, metrics);
+                let mut buffer_bor = buffer.borrow_with(&mut font_system);
+                buffer_bor.set_size(100., 14.);
+                buffer_bor.set_wrap(glyphon::Wrap::Glyph);
+                buffer_bor.set_text(&f, Attrs::new(), glyphon::Shaping::Advanced);
+                Cell::new(j, 0, buffer)
+            })
+            .collect();
 
         Self {
             font_system,
@@ -266,6 +298,7 @@ impl TextSystem {
             atlas,
             metrics,
             renderer,
+            field_buffers,
             buffers: vec![],
         }
     }
@@ -274,14 +307,14 @@ impl TextSystem {
         let now = Instant::now();
         let format_options = FormatOptions::default();
         let mut cells = Vec::new();
-        for (j, field) in batches[0].schema().fields().iter().enumerate() {
-            let mut buffer = glyphon::Buffer::new(&mut self.font_system, self.metrics);
-            let mut buffer_bor = buffer.borrow_with(&mut self.font_system);
-            buffer_bor.set_size(100., 14.);
-            buffer_bor.set_wrap(glyphon::Wrap::Glyph);
-            buffer_bor.set_text(field.name(), Attrs::new(), glyphon::Shaping::Advanced);
-            cells.push(Cell::new(j, 0, buffer));
-        }
+        // for (j, field) in batches[0].schema().fields().iter().enumerate() {
+        //     let mut buffer = glyphon::Buffer::new(&mut self.font_system, self.metrics);
+        //     let mut buffer_bor = buffer.borrow_with(&mut self.font_system);
+        //     buffer_bor.set_size(100., 14.);
+        //     buffer_bor.set_wrap(glyphon::Wrap::Glyph);
+        //     buffer_bor.set_text(field.name(), Attrs::new(), glyphon::Shaping::Advanced);
+        //     cells.push(Cell::new(j, 0, buffer));
+        // }
         for batch in batches.iter() {
             let formatters = batch
                 .columns()
@@ -298,7 +331,6 @@ impl TextSystem {
                     buffer_bor.set_size(100., 14.);
                     buffer_bor.set_wrap(glyphon::Wrap::Glyph);
                     buffer_bor.set_text(&val.to_string(), Attrs::new(), glyphon::Shaping::Advanced);
-                    buffer_bor.shape_until(1);
                     cells.push(Cell::new(j, row + 1 + skip, buffer));
                 }
             }
@@ -316,34 +348,42 @@ impl TextSystem {
         height: u32,
         offsets: Offsets,
     ) {
-        let areas: Vec<_> = self
-            .buffers
+        let mut areas: Vec<_> = self
+            .field_buffers
             .iter()
-            .map(|c| {
-                let (top, bound_top, default_color) = if c.row == 0 {
-                    (c.row as f32, 0, glyphon::Color::rgb(180, 180, 180))
-                } else {
-                    (
-                        offsets.y + (c.row as f32 * 14.),
-                        14,
-                        glyphon::Color::rgb(240, 240, 255),
-                    )
-                };
-                TextArea {
-                    buffer: &c.buffer,
-                    left: offsets.x + (c.col as f32 * 110.),
-                    top,
-                    scale: 1.0,
-                    bounds: TextBounds {
-                        left: 0,
-                        top: bound_top,
-                        right: i32::MAX,
-                        bottom: i32::MAX,
-                    },
-                    default_color,
-                }
+            .map(|c| TextArea {
+                buffer: &c.buffer,
+                left: offsets.x + (c.col as f32 * 110.),
+                top: 0.,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: 0,
+                    top: 0,
+                    right: i32::MAX,
+                    bottom: i32::MAX,
+                },
+                default_color: glyphon::Color::rgb(180, 180, 180),
             })
             .collect();
+
+        let cell_areas: Vec<_> = self
+            .buffers
+            .iter()
+            .map(|c| TextArea {
+                buffer: &c.buffer,
+                left: offsets.x + (c.col as f32 * 110.),
+                top: offsets.y + (c.row as f32 * 14.),
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: 0,
+                    top: 14,
+                    right: i32::MAX,
+                    bottom: i32::MAX,
+                },
+                default_color: glyphon::Color::rgb(240, 240, 255),
+            })
+            .collect();
+        areas.extend(cell_areas);
         self.renderer
             .prepare(
                 device,
